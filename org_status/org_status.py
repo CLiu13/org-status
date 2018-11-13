@@ -1,12 +1,14 @@
 from os import environ, path
 from multiprocessing.dummy import Pool
 from argparse import ArgumentParser
-
+from giturlparse import parse
 from termcolor import colored
+
+import yaml
 
 from org_status.status_providers import Status, get_supported_status_providers
 from org_status.org_hosts import get_all_supported_hosts
-from org_status.encoders import get_all_supported_encoders
+from org_status.formatters import get_all_supported_formatters
 
 
 def get_host_token(host_name):
@@ -21,8 +23,8 @@ def get_status_provider_statuses():
             yield (provider, None)
 
 
-def generate_fetch_jobs(org_strings):
-    for org_string in org_strings:
+def generate_fetch_jobs(args):
+    for org_string in args.orgs:
         host, sym, org = org_string.strip().partition(':')
         host = host.lower()
 
@@ -35,16 +37,37 @@ def generate_fetch_jobs(org_strings):
         if host != '':
             for supported_host in get_all_supported_hosts():
                 if host == supported_host.HostName:
-                    yield (supported_host, org)
+                    repo_urls = get_repo_urls(args, supported_host)
+                    yield (supported_host, org, repo_urls)
                     raise StopIteration
         else:
             for available_host in get_all_supported_hosts():
-                yield (available_host, org)
+                repo_urls = get_repo_urls(args, available_host)
+                yield (available_host, org, repo_urls)
+
+
+def get_repo_urls(args, host):
+    repo_urls = []
+    if args.use_repo_list:
+        styled = (lambda l, *_: l) if args.no_color else colored
+        repos = decode_repo_list(args.use_repo_list, args.format, styled)
+        for repo in repos:
+            if parse(repo[1]).platform == host.HostName:
+                repo_urls.append(repo[1])
+    return repo_urls
 
 
 def aggregate_org_status(org_host, threads=2):
     with Pool(processes=threads) as pool:
-        return pool.map(org_host.process_repository, org_host.repositories)
+        urls = []
+        for repo in org_host.repositories:
+            urls.append(repo.web_url)
+        return pool.map(org_host.process_repository, urls)
+
+
+def aggregate_org_status_from_repo_list(org_host, repos, threads=2):
+    with Pool(processes=threads) as pool:
+        return pool.map(org_host.process_repository, repos)
 
 
 def present_status(statuses, no_color):
@@ -84,6 +107,7 @@ def get_argument_parser():
     parser.add_argument('--verbose', '-v', action='store_true')
     parser.add_argument('--hosts-only', '-o', action='store_true')
     parser.add_argument('--skip-host-checks', action='store_true')
+    parser.add_argument('--use-repo-list', type=str)
     parser.add_argument('--export-repos', type=str)
     parser.add_argument('--format', type=str, default='gitman')
     parser.add_argument('--check-providers-only', action='store_true')
@@ -92,22 +116,40 @@ def get_argument_parser():
 
 
 def encode_repo_list(repo_data, encoder_name, styled):
-    encoders = get_all_supported_encoders()
+    encoders = get_all_supported_formatters()
     encoded_repo_list = None
 
     for encoder in encoders:
         if encoder.NAME == encoder_name:
             try:
-                encoded_repo_list = encoder().convert_repo_list_to_format(
-                    repo_data)
+                encoded_repo_list = yaml.dump(
+                    list(encoder().encode_repo_list(
+                        repo_data)), default_flow_style=False)
+                return encoded_repo_list
             except NotImplementedError:
                 print(styled(
                         f'{encoder_name} does not support exporting results',
                         'red'))
-        else:
-            print(styled(f'unknown export format {encoder_name}', 'red'))
 
-    return encoded_repo_list
+    print(styled(f'unknown export format {encoder_name}', 'red'))
+
+
+def decode_repo_list(file_name, decoder_name, styled):
+    decoders = get_all_supported_formatters()
+    decoded_repo_list = None
+
+    for decoder in decoders:
+        if decoder.NAME == decoder_name:
+            try:
+                decoded_repo_list = list(decoder().decode_repo_list(
+                    file_name))
+                return decoded_repo_list
+            except NotImplementedError:
+                print(styled(
+                        f'{decoder_name} does not support exporting results',
+                        'red'))
+
+    print(styled(f'unknown export format {decoder_name}', 'red'))
 
 
 def write_data_to_file(encoded_data, filename, styled, verbose):
@@ -148,55 +190,69 @@ def main():
 
     all_repositories = []
 
-    for Host, org in generate_fetch_jobs(args.orgs):
-        token = None
-
-        if not args.skip_host_checks:
-            try:
-                if not Host.get_host_status():
-                    print(styled(f'{Host.HostName} is currently down', 'red'))
-                    continue
-                else:
-                    hosts_only_print(f'{Host.HostName} is up')
-            except NotImplementedError:
-                verbose(
-                    f'{Host.HostName} does not support checking host status')
-
-        if args.hosts_only and args.skip_host_checks:
-            verbose('nothing to do')
-            return
-        elif args.hosts_only:
-            continue
-
-        if (args.verbose):
-            print(f'processing org {Host.HostName}:{org}')
-
-        try:
-            token = get_host_token(Host.HostName)
-        except KeyError as exp:
-            clean_exp = str(exp).replace("'", '')
-
-            if clean_exp.endswith('TOKEN'):
-                token_type = clean_exp.replace('_TOKEN', '').title()
-
-                text = (f'Lookup requires an access token from {token_type} '
-                        f'with permissions to this organization. Please set '
-                        f'an environment variable named {clean_exp}.')
-
-                print(styled(text, 'red'))
-
+    if args.use_repo_list:
+        for Host, org, repo_urls in generate_fetch_jobs(args):
+            if args.export_repos:
+                all_repositories += repo_urls
                 continue
 
-            raise exp
+            org_host = Host(None, org, False, verbose=args.verbose)
+            org_status = aggregate_org_status_from_repo_list(
+                org_host, repo_urls, threads=args.threads)
+            present_status(org_status, args.no_color)
+    else:
+        for Host, org, _ in generate_fetch_jobs(args):
+            token = None
 
-        org_host = Host(token, org, verbose=args.verbose)
+            if not args.skip_host_checks:
+                try:
+                    if not Host.get_host_status():
+                        print(styled(
+                            f'{Host.HostName} is currently down', 'red'))
+                        continue
+                    else:
+                        hosts_only_print(f'{Host.HostName} is up')
+                except NotImplementedError:
+                    verbose(
+                        f'{Host.HostName} '
+                        f'does not support checking host status')
 
-        if args.export_repos:
-            all_repositories += org_host.repositories
-            continue
+            if args.hosts_only and args.skip_host_checks:
+                verbose('nothing to do')
+                return
+            elif args.hosts_only:
+                continue
 
-        org_status = aggregate_org_status(org_host, threads=args.threads)
-        present_status(org_status, args.no_color)
+            if (args.verbose):
+                print(f'processing org {Host.HostName}:{org}')
+
+            try:
+                token = get_host_token(Host.HostName)
+            except KeyError as exp:
+                clean_exp = str(exp).replace("'", '')
+
+                if clean_exp.endswith('TOKEN'):
+                    token_type = clean_exp.replace('_TOKEN', '').title()
+
+                    text = (f'Lookup requires an access token from '
+                            f'{token_type} with permissions to this '
+                            f'organization. Please set an environment '
+                            f'variable named {clean_exp}.')
+
+                    print(styled(text, 'red'))
+
+                    continue
+
+                raise exp
+
+            org_host = Host(token, org, True, verbose=args.verbose)
+
+            if args.export_repos:
+                all_repositories += org_host.repositories
+                continue
+
+            org_status = aggregate_org_status(org_host, threads=args.threads)
+            present_status(org_status, args.no_color)
 
     if args.export_repos:
         export_data = encode_repo_list(all_repositories, args.format, styled)

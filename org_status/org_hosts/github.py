@@ -14,16 +14,18 @@ class GitHubOrg(OrgHost):
     HostName = 'github'
     StatusProvider = [TravisBuildStatus, AppVeyorStatus]
 
-    def __init__(self, token, group, **kargs):
+    def __init__(self, token, group, sync=True, **kargs):
         super().__init__(**kargs)
 
         self._group = group
-        self._token = GitHubToken(token)
-        self._org = GitHubOrganization(self._token, self._group)
-
         self._status_provider = []
         for i in enumerate(self.StatusProvider):
             self._status_provider.append(self.StatusProvider[i[0]](self._group))
+
+        self._sync = sync
+        if sync:
+            self._token = GitHubToken(token)
+            self._org = GitHubOrganization(self._token, self._group)
 
     @classmethod
     def get_host_status(cls):
@@ -31,11 +33,11 @@ class GitHubOrg(OrgHost):
         status = json.loads(status.text)
         return status['status'] == 'good'
 
-    def process_repository(self, repo, branch='master'):
-        self.print_status(repo.web_url)
+    def process_repository(self, web_url, branch='master'):
+        self.print_status(web_url)
 
         # reliable enough?
-        repo_name = repo.web_url.split('/')[-1]
+        repo_name = web_url.split('/')[-1]
         repo_status = []
         for i in enumerate(self._status_provider):
             repo_status.append(self._status_provider[i[0]]
@@ -56,8 +58,12 @@ class GitHubOrg(OrgHost):
         elif Status.ERROR in repo_status:
             repo_status = Status.ERROR
 
-        return RepoStatus(repo.web_url, repo_status)
+        return RepoStatus(web_url, repo_status)
 
     @property
     def repositories(self):
-        return self._org.repositories
+        return [repo.web_url for repo in self._org.repositories]
+
+    @property
+    def sync(self):
+        return self._sync
