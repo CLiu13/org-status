@@ -33,9 +33,10 @@ class OrgHost:
 
 class RepoStatus:
 
-    def __init__(self, repo_url, repo_status):
+    def __init__(self, repo_url, repo_status, last_commit_date):
         self.repo_url = repo_url
         self.repo_status = repo_status
+        self.last_commit_date = last_commit_date
 
 
 def get_all_supported_hosts():

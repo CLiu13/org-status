@@ -47,9 +47,12 @@ def aggregate_org_status(org_host, threads=2):
         return pool.map(org_host.process_repository, org_host.repositories)
 
 
-def present_status(statuses, no_color):
+def present_status(statuses, no_color, sort):
     color = (lambda l, *_: l) if no_color else colored
     r_pass, r_fail, r_unknown, r_error = 0, 0, 0, 0
+
+    if sort:
+        statuses.sort(key=lambda status: status.last_commit_date, reverse=True)
 
     for status in statuses:
         repo_status = status.repo_status or Status.UNDETERMINED
@@ -68,8 +71,13 @@ def present_status(statuses, no_color):
             r_unknown += 1
             continue
 
-        print('{repo}: {status}'.format(
-            repo=status.repo_url, status=status_text))
+        date_text = color(status.last_commit_date, 'blue')
+
+        print('{repo}: {status} (last commit: {date})'.format(
+            repo=status.repo_url,
+            status=status_text,
+            date=date_text,
+            ))
 
     print('{} Passing, {} Failing, {} Error, {} Unknown '
           'of {} Repositories'.format(
@@ -85,6 +93,7 @@ def get_argument_parser():
     parser.add_argument('--hosts-only', '-o', action='store_true')
     parser.add_argument('--skip-host-checks', action='store_true')
     parser.add_argument('--export-repos', type=str)
+    parser.add_argument('--sort-by-last-commit', action='store_true')
     parser.add_argument('--format', type=str, default='gitman')
     parser.add_argument('--check-providers-only', action='store_true')
 
@@ -196,7 +205,7 @@ def main():
             continue
 
         org_status = aggregate_org_status(org_host, threads=args.threads)
-        present_status(org_status, args.no_color)
+        present_status(org_status, args.no_color, args.sort_by_last_commit)
 
     if args.export_repos:
         export_data = encode_repo_list(all_repositories, args.format, styled)

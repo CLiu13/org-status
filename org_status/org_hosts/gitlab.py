@@ -1,4 +1,5 @@
 import json
+from types import MethodType
 
 import requests
 from IGitt.GitLab.GitLab import GitLabPrivateToken
@@ -22,6 +23,9 @@ class GitLabOrg(OrgHost):
         self._token = GitLabPrivateToken(token)
         self._org = GitLabOrganization(self._token, self._group)
 
+        for repo in self._org.repositories:
+            repo.get_last_commit_date = MethodType(_get_last_commit_date, repo)
+
         self._status_provider = self.StatusProvider(self._group)
 
     @classmethod
@@ -39,8 +43,19 @@ class GitLabOrg(OrgHost):
                                                        self.HostName,
                                                        branch=branch)
 
-        return RepoStatus(repo.web_url, repo_status)
+        last_commit_date = repo.get_last_commit_date()
+
+        return RepoStatus(repo.web_url, repo_status, last_commit_date)
 
     @property
     def repositories(self):
         return self._org.repositories
+
+
+def _get_last_commit_date(self):
+    repo_commit_dates = ['']
+    for commit in self.commits:
+        repo_commit_dates.append(commit.data._data['committed_date'])
+    repo_commit_dates.sort()
+
+    return repo_commit_dates[-1]

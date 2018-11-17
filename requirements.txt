@@ -2,3 +2,5 @@ git+https://gitlab.com/gitmate/open-source/IGitt.git#egg=IGitt
 requests
 termcolor
 giturlparse
+pyyaml
+gitman

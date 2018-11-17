@@ -1,0 +1,4 @@
+https://github.com/foo/r0: passing (last commit: 2018-11-05T08:20:37Z)
+https://github.com/foo/r1: passing (last commit: 2018-11-02T17:31:46Z)
+https://github.com/foo/r2: passing (last commit: 2018-11-06T02:27:42Z)
+0 Passing, 0 Failing, 0 Error, 0 Unknown of 3 Repositories

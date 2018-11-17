@@ -1,4 +1,5 @@
 import json
+from types import MethodType
 
 import requests
 from IGitt.GitHub.GitHub import GitHubToken
@@ -20,6 +21,9 @@ class GitHubOrg(OrgHost):
         self._group = group
         self._token = GitHubToken(token)
         self._org = GitHubOrganization(self._token, self._group)
+
+        for repo in self._org.repositories:
+            repo.get_last_commit_date = MethodType(_get_last_commit_date, repo)
 
         self._status_provider = []
         for i in enumerate(self.StatusProvider):
@@ -56,8 +60,14 @@ class GitHubOrg(OrgHost):
         elif Status.ERROR in repo_status:
             repo_status = Status.ERROR
 
-        return RepoStatus(repo.web_url, repo_status)
+        last_commit_date = repo.get_last_commit_date()
+
+        return RepoStatus(repo.web_url, repo_status, last_commit_date)
 
     @property
     def repositories(self):
         return self._org.repositories
+
+
+def _get_last_commit_date(self):
+    return self.data._data['pushed_at']

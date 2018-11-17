@@ -14,6 +14,6 @@ class GitManEncoder(RepoListEncoder):
             name = parse(repo.web_url).repo
             yml_data['sources'].append({'name': name,
                                         'repo': repo.web_url,
-                                        'rev': 'master'})
-
+                                        'rev': 'master',
+                                        })
         return yaml.dump(yml_data, default_flow_style=False)
